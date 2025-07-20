@@ -116,7 +116,7 @@ const roomUsers = new Map();
 const isProduction = process.env.NODE_ENV === 'production';
 const allowedOrigins = isProduction 
   ? [
-      'https://plp-mern-wk-5-web-sockets-4.onrender.com',
+      'https://plp-mern-wk-5-web-sockets.onrender.com',
       'https://plp-mern-wk-5-web-sockets-client.vercel.app',
       'https://admin.socket.io'
     ]
