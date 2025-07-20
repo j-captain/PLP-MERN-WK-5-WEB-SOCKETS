@@ -116,19 +116,21 @@ const roomUsers = new Map();
 const isProduction = process.env.NODE_ENV === 'production';
 const allowedOrigins = isProduction 
   ? [
-      '*', // Allow all origins in production
+      'https://plp-mern-wk-5-web-sockets-3.onrender.com',
       'https://admin.socket.io'
     ]
   : [
       'http://localhost:5173',
-      process.env.CLIENT_URL,
+      'http://127.0.0.1:5173',
       'https://admin.socket.io'
-    ].filter(Boolean);
+    ];
 
 const corsOptions = {
   origin: (origin, callback) => {
-    if (isProduction || !origin || allowedOrigins.includes(origin)) {
-      console.log(colorful.success(`✓ Allowed origin: ${origin || 'unknown'}`));
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.includes(origin)) {
+      console.log(colorful.success(`✓ Allowed origin: ${origin}`));
       callback(null, true);
     } else {
       console.log(colorful.error(`✗ Blocked origin: ${origin}`));
@@ -136,7 +138,7 @@ const corsOptions = {
     }
   },
   credentials: true,
-  methods: ['GET', 'POST', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 };
 
@@ -267,35 +269,15 @@ app.get('/', (req, res) => {
     status: 'running',
     time: new Date().toISOString(),
     port: process.env.PORT || 5000,
-    clientPort: 5173,
-    clientStatus: 'unknown',
     connectionAttempts: connectionAttempts,
     allowedOrigins: allowedOrigins
   };
 
-  const net = require('net');
-  const clientPortChecker = net.createConnection({ port: 5173 }, () => {
-    serverStatus.clientStatus = 'accessible';
-    clientPortChecker.end();
-    sendResponse();
-  });
-
-  clientPortChecker.on('error', (err) => {
-    serverStatus.clientStatus = 'inaccessible';
-    serverStatus.clientError = err.message;
-    sendResponse();
-  });
-
-  function sendResponse() {
-    const statusIcon = serverStatus.clientStatus === 'accessible' ? '✅' : '❌';
-    
-    console.log(`
+  console.log(`
     \x1b[46m\x1b[30m┌─────────────────────────────────────┐\x1b[0m
     \x1b[46m\x1b[30m│ 🏰 SERVER STATUS REPORT              │\x1b[0m
     \x1b[46m\x1b[30m├─────────────────────────────────────┤\x1b[0m
     │ ${colorful.info(`Port: ${serverStatus.port}`)}
-    │ ${colorful.info(`Client Port 5173: ${statusIcon} ${serverStatus.clientStatus}`)}
-    ${serverStatus.clientError ? `│ ${colorful.error(serverStatus.clientError)}\n` : ''}
     │ ${colorful.info(`Connection Attempts: ${serverStatus.connectionAttempts}`)}
     \x1b[46m\x1b[30m└─────────────────────────────────────┘\x1b[0m
     `);
@@ -306,13 +288,14 @@ app.get('/', (req, res) => {
       <h2>Recent Activity</h2>
       <div id="connections"></div>
     `);
-  }
 });
 
 // Socket.IO setup
 const io = new Server(server, {
   cors: {
-    origin: allowedOrigins,
+    origin: isProduction 
+      ? ['https://plp-mern-wk-5-web-sockets-3.onrender.com', 'https://admin.socket.io']
+      : ['http://localhost:5173', 'http://127.0.0.1:5173', 'https://admin.socket.io'],
     methods: ["GET", "POST"],
     credentials: true
   },
@@ -334,25 +317,7 @@ io.use((socket, next) => {
   };
   
   trackConnection(socket, attempt.status);
-
-  // Skip port check in production
-  if (!isProduction && socket.handshake.headers.origin === 'http://localhost:5173') {
-    const net = require('net');
-    const testConnection = net.createConnection({ port: 5173 }, () => {
-      testConnection.end();
-      attempt.status = 'success';
-      console.log(colorful.success(`✓ Port 5173 accessible from ${socket.handshake.address}`));
-      next();
-    });
-    
-    testConnection.on('error', (err) => {
-      attempt.status = 'failed';
-      console.log(colorful.error(`✗ Port 5173 connection failed: ${err.message}`));
-      next(new Error('Client port unreachable'));
-    });
-  } else {
-    next();
-  }
+  next();
 });
 
 // Initialize default rooms on startup
