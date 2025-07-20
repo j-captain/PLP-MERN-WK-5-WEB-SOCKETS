@@ -114,24 +114,27 @@ const roomUsers = new Map();
 
 // Enhanced CORS configuration
 const isProduction = process.env.NODE_ENV === 'production';
+const allowedOrigins = isProduction 
+  ? [
+      '*', // Allow all origins in production
+      'https://admin.socket.io'
+    ]
+  : [
+      'http://localhost:5173',
+      process.env.CLIENT_URL,
+      'https://admin.socket.io'
+    ].filter(Boolean);
+
 const corsOptions = {
-  origin: isProduction 
-    ? '*' // Allow all origins in production
-    : (origin, callback) => {
-        const allowedOrigins = [
-          'http://localhost:5173',
-          process.env.CLIENT_URL,
-          'https://admin.socket.io'
-        ].filter(Boolean);
-        
-        if (!origin || allowedOrigins.includes(origin)) {
-          console.log(colorful.success(`✓ Allowed origin: ${origin || 'unknown'}`));
-          callback(null, true);
-        } else {
-          console.log(colorful.error(`✗ Blocked origin: ${origin}`));
-          callback(new Error('Not allowed by CORS'));
-        }
-      },
+  origin: (origin, callback) => {
+    if (isProduction || !origin || allowedOrigins.includes(origin)) {
+      console.log(colorful.success(`✓ Allowed origin: ${origin || 'unknown'}`));
+      callback(null, true);
+    } else {
+      console.log(colorful.error(`✗ Blocked origin: ${origin}`));
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
@@ -267,9 +270,7 @@ app.get('/', (req, res) => {
     clientPort: 5173,
     clientStatus: 'unknown',
     connectionAttempts: connectionAttempts,
-    allowedOrigins: isProduction ? '*' : corsOptions.origin instanceof Function ? 
-      ['http://localhost:5173', process.env.CLIENT_URL, 'https://admin.socket.io'] : 
-      corsOptions.origin
+    allowedOrigins: allowedOrigins
   };
 
   const net = require('net');
@@ -311,11 +312,7 @@ app.get('/', (req, res) => {
 // Socket.IO setup
 const io = new Server(server, {
   cors: {
-    origin: isProduction ? '*' : [
-      'http://localhost:5173',
-      process.env.CLIENT_URL,
-      'https://admin.socket.io'
-    ],
+    origin: allowedOrigins,
     methods: ["GET", "POST"],
     credentials: true
   },
@@ -338,6 +335,7 @@ io.use((socket, next) => {
   
   trackConnection(socket, attempt.status);
 
+  // Skip port check in production
   if (!isProduction && socket.handshake.headers.origin === 'http://localhost:5173') {
     const net = require('net');
     const testConnection = net.createConnection({ port: 5173 }, () => {
