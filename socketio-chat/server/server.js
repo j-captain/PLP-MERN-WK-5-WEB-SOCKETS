@@ -58,7 +58,7 @@ const storage = multer.diskStorage({
 const upload = multer({ 
   storage,
   limits: {
-    fileSize: 10 * 1024 * 1024 // 10MB limit
+    fileSize: 1024 * 1024 * 1024 //  limit
   }
 });
 
@@ -70,6 +70,59 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
     console.log(colorful.debug(`Serving file: ${path} as ${contentType}`));
   }
 }));
+
+// File download endpoint
+app.get('/download/:filename', (req, res) => {
+  try {
+    const filePath = path.join(__dirname, 'uploads', req.params.filename);
+    
+    if (!fs.existsSync(filePath)) {
+      console.log(colorful.error(`✗ File not found: ${req.params.filename}`));
+      return res.status(404).json({ success: false, error: 'File not found' });
+    }
+
+    const fileStream = fs.createReadStream(filePath);
+    const originalName = req.params.filename.split('-').slice(1).join('-');
+    
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(originalName)}"`);
+    res.setHeader('Content-Type', mime.lookup(filePath) || 'application/octet-stream');
+
+    console.log(colorful.success(`✓ File download started: ${originalName}`));
+    fileStream.pipe(res);
+  } catch (err) {
+    console.log(colorful.error(`✗ File download error: ${err.message}`));
+    res.status(500).json({ success: false, error: 'File download failed' });
+  }
+});
+
+// File delete endpoint
+app.delete('/delete-file/:filename', async (req, res) => {
+  try {
+    const filename = req.params.filename;
+    const filePath = path.join(__dirname, 'uploads', filename);
+    
+    if (!fs.existsSync(filePath)) {
+      console.log(colorful.error(`✗ File not found: ${filename}`));
+      return res.status(404).json({ success: false, error: 'File not found' });
+    }
+
+    // First, find and update all messages referencing this file
+    const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${filename}`;
+    await Messsage.updateMany(
+      { 'file.url': fileUrl },
+      { $set: { 'file.deleted': true } }
+    );
+
+    // Then delete the file
+    fs.unlinkSync(filePath);
+    console.log(colorful.success(`✓ File deleted: ${filename}`));
+
+    res.json({ success: true, message: 'File deleted successfully' });
+  } catch (err) {
+    console.log(colorful.error(`✗ File deletion error: ${err.message}`));
+    res.status(500).json({ success: false, error: 'File deletion failed' });
+  }
+});
 
 // Handle file upload endpoint
 app.post('/upload', upload.single('file'), (req, res) => {
@@ -111,6 +164,7 @@ const colorful = {
 // Track active users and rooms
 const activeUsers = new Map();
 const roomUsers = new Map();
+const userSockets = new Map(); // Track user sockets for read receipts
 
 // Enhanced CORS configuration
 const isProduction = process.env.NODE_ENV === 'production';
@@ -295,7 +349,7 @@ app.get('/', (req, res) => {
 const io = new Server(server, {
   cors: {
     origin: isProduction 
-      ? ['https://plp-mern-wk-5-web-sockets.onrender.com', 'https://plp-mern-wk-5-web-sockets-frontend.onrender.com', 'https://admin.socket.io']
+      ? ['https://plp-mern-wk-5-web-sockets-backened.onrender.com', 'https://plp-mern-wk-5-web-sockets-frontend-4.onrender.com', 'https://admin.socket.io']
       : ['http://localhost:5173', 'http://127.0.0.1:5173', 'https://admin.socket.io'],
     methods: ["GET", "POST"],
     credentials: true
@@ -355,6 +409,13 @@ io.on('connection', async (socket) => {
   // Username tracking
   socket.on('setUsername', (username) => {
     activeUsers.set(socket.id, username);
+    
+    // Track user socket for read receipts
+    if (!userSockets.has(username)) {
+      userSockets.set(username, new Set());
+    }
+    userSockets.get(username).add(socket.id);
+    
     console.log(colorful.success(`✓ User ${username} connected (ID: ${socket.id})`));
   });
 
@@ -397,7 +458,9 @@ io.on('connection', async (socket) => {
           const users = roomUsers.get(room);
           if (users) {
             users.delete(username);
-            if (users.size === 0) roomUsers.delete(room);
+            if (users.size === 0) {
+              roomUsers.delete(room);
+            }
           }
         });
 
@@ -488,16 +551,16 @@ io.on('connection', async (socket) => {
   socket.on('sendMessage', async (message) => {
     try {
       const username = activeUsers.get(socket.id) || 'Anonymous';
-      const room = Array.from(socket.rooms).find(r => r !== socket.id);
+      const roomName = Array.from(socket.rooms).find(r => r !== socket.id);
       
-      if (!room) {
+      if (!roomName) {
         console.log(colorful.warn(`⚠ User ${username} tried to send message without joining a room`));
         return;
       }
       
-      const roomDoc = await Room.findOne({ name: room });
+      const roomDoc = await Room.findOne({ name: roomName });
       if (!roomDoc) {
-        console.log(colorful.error(`✗ Room ${room} not found in database`));
+        console.log(colorful.error(`✗ Room ${roomName} not found in database`));
         return;
       }
       
@@ -505,8 +568,11 @@ io.on('connection', async (socket) => {
       const messageData = {
         content: message.content,
         room: roomDoc._id,
+        roomName: roomName,
         username: username,
-        time: new Date()
+        time: new Date(),
+        readBy: [username],
+        deletedFor: []
       };
 
       // Add file information if present
@@ -515,7 +581,8 @@ io.on('connection', async (socket) => {
           url: message.file.url,
           name: message.file.name,
           type: message.file.type,
-          size: message.file.size
+          size: message.file.size,
+          deleted: false
         };
         console.log(colorful.success(`✓ File attached: ${message.file.name}`));
         console.log(colorful.debug(`⚡ File type: ${message.file.type}, size: ${message.file.size} bytes`));
@@ -534,32 +601,131 @@ io.on('connection', async (socket) => {
         username: username,
         content: message.content,
         time: savedMessage.time,
-        room: room
+        room: roomName,
+        readBy: savedMessage.readBy,
+        file: savedMessage.file
       };
 
-      // Add file to emitted message if present
-      if (savedMessage.file) {
-        messageToEmit.file = savedMessage.file;
-        console.log(colorful.debug(`⚡ Sending file: ${savedMessage.file.url}`));
-      }
+      io.to(roomName).emit('message', messageToEmit);
       
-      io.to(room).emit('message', messageToEmit);
-      
-      console.log(colorful.debug(`⚡ Message from ${username} in ${room}: ${message.content ? message.content.substring(0, 20) + '...' : 'File message'}`));
+      console.log(colorful.debug(`⚡ Message from ${username} in ${roomName}: ${message.content ? message.content.substring(0, 20) + '...' : 'File message'}`));
     } catch (err) {
       console.log(colorful.error(`✗ Message send error: ${err.message}`));
     }
   });
 
-  // File download handler
-  socket.on('downloadFile', ({ fileUrl, fileName, fileType }) => {
-    console.log(colorful.debug(`⚡ File download requested: ${fileUrl}`));
-    socket.emit('openFile', { 
-      url: fileUrl,
-      name: fileName,
-      type: fileType 
-    });
-    console.log(colorful.success(`✓ File opened: ${fileUrl}`));
+  // File download request handler
+  socket.on('downloadFile', async ({ messageId }) => {
+    try {
+      const message = await Messsage.findById(messageId);
+      if (!message || !message.file || message.file.deleted) {
+        return socket.emit('fileError', { message: 'File not available' });
+      }
+
+      const filename = message.file.url.split('/').pop();
+      const downloadUrl = `http://${socket.handshake.headers.host}/download/${filename}`;
+      
+      socket.emit('fileDownloadReady', { 
+        url: downloadUrl,
+        filename: filename,
+        originalName: message.file.name
+      });
+      
+      console.log(colorful.success(`✓ File download prepared: ${message.file.name}`));
+    } catch (err) {
+      console.log(colorful.error(`✗ File download error: ${err.message}`));
+      socket.emit('fileError', { message: 'Download failed' });
+    }
+  });
+
+  // File deletion handler
+  socket.on('deleteFile', async ({ messageId }) => {
+    try {
+      const message = await Messsage.findById(messageId);
+      if (!message || !message.file) {
+        return socket.emit('fileError', { message: 'File not found' });
+      }
+
+      // Extract filename from URL
+      const filename = message.file.url.split('/').pop();
+      const filePath = path.join(__dirname, 'uploads', filename);
+
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        console.log(colorful.success(`✓ File deleted: ${filename}`));
+      }
+
+      // Update message to mark file as deleted
+      message.file.deleted = true;
+      await message.save();
+
+      // Notify all room members
+      io.to(message.roomName).emit('fileDeleted', { messageId });
+
+      socket.emit('fileDeletedSuccess', { messageId });
+    } catch (err) {
+      console.log(colorful.error(`✗ File deletion error: ${err.message}`));
+      socket.emit('fileError', { message: 'File deletion failed' });
+    }
+  });
+
+  // Mark message as read
+  socket.on('markAsRead', async ({ messageId, username }) => {
+    try {
+      console.log(colorful.debug(`⚡ Marking message ${messageId} as read by ${username}`));
+      const message = await Messsage.findById(messageId);
+      if (!message) {
+        console.log(colorful.error(`✗ Message ${messageId} not found`));
+        return;
+      }
+      
+      // Add user to readBy array if not already present
+      if (!message.readBy.includes(username)) {
+        message.readBy.push(username);
+        await message.save();
+        
+        // Notify sender that message has been read
+        const senderSockets = userSockets.get(message.username);
+        if (senderSockets) {
+          senderSockets.forEach(sockId => {
+            io.to(sockId).emit('messageRead', { messageId, readBy: message.readBy });
+          });
+        }
+        
+        console.log(colorful.success(`✓ Message ${messageId} marked as read by ${username}`));
+      }
+    } catch (err) {
+      console.log(colorful.error(`✗ Error marking message as read: ${err.message}`));
+    }
+  });
+
+  // Delete message
+  socket.on('deleteMessage', async ({ messageId, deleteForAll, username }) => {
+    try {
+      console.log(colorful.debug(`⚡ Deleting message ${messageId} (for all: ${deleteForAll}) by ${username}`));
+      const message = await Messsage.findById(messageId);
+      if (!message) {
+        console.log(colorful.error(`✗ Message ${messageId} not found`));
+        return;
+      }
+      
+      if (deleteForAll) {
+        // Delete for everyone
+        await Messsage.deleteOne({ _id: messageId });
+        io.to(message.roomName).emit('messageDeleted', { messageId });
+        console.log(colorful.success(`✓ Message ${messageId} deleted for everyone by ${username}`));
+      } else {
+        // Delete for me
+        if (!message.deletedFor.includes(username)) {
+          message.deletedFor.push(username);
+          await message.save();
+          socket.emit('messageDeletedForMe', { messageId });
+          console.log(colorful.success(`✓ Message ${messageId} deleted for ${username}`));
+        }
+      }
+    } catch (err) {
+      console.log(colorful.error(`✗ Error deleting message: ${err.message}`));
+    }
   });
 
   // Typing indicators
@@ -593,6 +759,15 @@ io.on('connection', async (socket) => {
           console.log(colorful.debug(`⚡ User ${username} was removed from room ${room}`));
         }
       });
+      
+      // Remove socket from userSockets
+      if (userSockets.has(username)) {
+        const sockets = userSockets.get(username);
+        sockets.delete(socket.id);
+        if (sockets.size === 0) {
+          userSockets.delete(username);
+        }
+      }
       
       activeUsers.delete(socket.id);
       
