@@ -12,7 +12,7 @@ const connectDB = async () => {
     console.log('\n🔌 Attempting to connect to MongoDB...');
     console.log('⏳ Please wait...\n');
     
-    await mongoose.connect(mongoURI);  // Removed deprecated options
+    await mongoose.connect(mongoURI);
     
     console.log('┌──────────────────────────────────────────────┐');
     console.log('│ ✅  SUCCESS: Connected to MongoDB            │');
