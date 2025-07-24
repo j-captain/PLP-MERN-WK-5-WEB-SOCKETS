@@ -8,7 +8,7 @@ export default function AuthPage({ onAuthSuccess }) {
   const navigate = useNavigate();
   
   // Use environment variable for API base URL
-  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://plp-mern-wk-5-web-sockets-frontend-4.onrender.com';
 
   const handleAuth = async (username, password, isLogin) => {
     try {
