@@ -1,31 +1,49 @@
 import { useState } from 'react';
 import AuthForm from '../components/AuthForm';
 
-
-
-const API_URL = "https://plp-mern-wk-5-web-sockets-backened-0nno.onrender.com/api";
-
-
 export default function AuthPage({ onAuthSuccess }) {
   const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  
+  // Use environment variable or fallback for development
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
   const handleAuth = async (username, password, isLogin) => {
     try {
-      const endpoint = isLogin ? '/api/login' : '/api/register';
-      const response = await fetch(`https://plp-mern-wk-5-web-sockets-backened-0nno.onrender.com/api${endpoint}`, {
+      // Clear previous errors and set loading state
+      setError('');
+      setIsLoading(true);
+
+      // Input validation
+      if (!username.trim() || !password.trim()) {
+        throw new Error('Username and password are required');
+      }
+
+      if (password.length < 6) {
+        throw new Error('Password must be at least 6 characters');
+      }
+
+      const endpoint = isLogin ? '/login' : '/register';
+      const response = await fetch(`${API_BASE_URL}/api${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
         credentials: 'include'
       });
 
+      const data = await response.json();
+      
       if (!response.ok) {
-        throw new Error(await response.text());
+        throw new Error(data.message || 'Authentication failed. Please try again.');
       }
 
-      onAuthSuccess(username);
+      console.log('Authentication successful', data);
+      onAuthSuccess(username, data.token); // Assuming backend returns a token
     } catch (err) {
-      setError(err.message);
+      console.error('Authentication error:', err);
+      setError(err.message || 'Failed to connect to server. Please try again later.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -35,6 +53,7 @@ export default function AuthPage({ onAuthSuccess }) {
         onAuth={handleAuth} 
         error={error} 
         setError={setError}
+        isLoading={isLoading}
       />
     </div>
   );
