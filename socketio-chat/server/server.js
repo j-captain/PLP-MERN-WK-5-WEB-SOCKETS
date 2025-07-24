@@ -5,6 +5,7 @@ const { Server } = require('socket.io');
 const { instrument } = require("@socket.io/admin-ui");
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const connectDB = require('./config/db');
 const User = require('./models/User');
 const Room = require('./models/Room');
@@ -58,7 +59,7 @@ const storage = multer.diskStorage({
 const upload = multer({ 
   storage,
   limits: {
-    fileSize: 1024 * 1024 * 1024 //  limit
+    fileSize: 1024 * 1024 * 1024 // 1GB limit
   }
 });
 
@@ -164,13 +165,12 @@ const colorful = {
 // Track active users and rooms
 const activeUsers = new Map();
 const roomUsers = new Map();
-const userSockets = new Map(); // Track user sockets for read receipts
+const userSockets = new Map();
 
 // Enhanced CORS configuration
 const isProduction = process.env.NODE_ENV === 'production';
 const allowedOrigins = isProduction 
   ? [
-      'https://plp-mern-wk-5-web-sockets-backened-0nno.onrender.com',
       'https://plp-mern-wk-5-web-sockets-frontend-4.onrender.com',
       'https://admin.socket.io'
     ]
@@ -229,7 +229,7 @@ const trackConnection = (socket, status) => {
   `);
 };
 
-// API Routes
+// Enhanced Auth Endpoints with JWT
 app.post('/api/register', async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -256,12 +256,19 @@ app.post('/api/register', async (req, res) => {
     const user = new User({ username, password });
     await user.save();
     
+    // Generate JWT token
+    const token = jwt.sign(
+      { userId: user._id, username: user.username },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+    
     console.log(colorful.success(`✓ New user registered: ${username}`));
-    console.log(colorful.debug(`⚡ User count: ${await User.countDocuments()}`));
     
     res.status(201).json({ 
       success: true,
-      username: user.username
+      username: user.username,
+      token
     });
   } catch (err) {
     console.log(colorful.error(`✗ Registration error: ${err.message}`));
@@ -304,10 +311,18 @@ app.post('/api/login', async (req, res) => {
       });
     }
 
+    // Generate JWT token
+    const token = jwt.sign(
+      { userId: user._id, username: user.username },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
     console.log(colorful.success(`✓ User logged in: ${username}`));
     res.json({ 
       success: true,
-      username: user.username
+      username: user.username,
+      token
     });
   } catch (err) {
     console.log(colorful.error(`✗ Login error: ${err.message}`));
@@ -316,6 +331,35 @@ app.post('/api/login', async (req, res) => {
       error: 'Login failed' 
     });
   }
+});
+
+// Auth middleware for protected routes
+const auth = async (req, res, next) => {
+  try {
+    const token = req.header('Authorization')?.replace('Bearer ', '');
+    
+    if (!token) {
+      throw new Error('Authentication required');
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.userId);
+
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    req.user = user;
+    req.token = token;
+    next();
+  } catch (err) {
+    res.status(401).json({ success: false, error: 'Please authenticate' });
+  }
+};
+
+// Example protected route
+app.get('/api/protected', auth, (req, res) => {
+  res.json({ success: true, message: `Hello ${req.user.username}` });
 });
 
 // Root route 
@@ -349,7 +393,7 @@ app.get('/', (req, res) => {
 const io = new Server(server, {
   cors: {
     origin: isProduction 
-      ? ['https://plp-mern-wk-5-web-sockets-backened-0nno.onrender.com', 'https://plp-mern-wk-5-web-sockets-frontend-4.onrender.com', 'https://admin.socket.io']
+      ? ['https://plp-mern-wk-5-web-sockets-frontend-4.onrender.com', 'https://admin.socket.io']
       : ['http://localhost:5173', 'http://127.0.0.1:5173', 'https://admin.socket.io'],
     methods: ["GET", "POST"],
     credentials: true
