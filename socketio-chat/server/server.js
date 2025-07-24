@@ -170,7 +170,7 @@ const userSockets = new Map(); // Track user sockets for read receipts
 const isProduction = process.env.NODE_ENV === 'production';
 const allowedOrigins = isProduction 
   ? [
-      'https://plp-mern-wk-5-web-sockets.onrender.com',
+      'https://plp-mern-wk-5-web-sockets-backened-0nno.onrender.com',
       'https://plp-mern-wk-5-web-sockets-frontend-4.onrender.com',
       'https://admin.socket.io'
     ]
@@ -349,7 +349,7 @@ app.get('/', (req, res) => {
 const io = new Server(server, {
   cors: {
     origin: isProduction 
-      ? ['https://plp-mern-wk-5-web-sockets-backened.onrender.com', 'https://plp-mern-wk-5-web-sockets-frontend-4.onrender.com', 'https://admin.socket.io']
+      ? ['https://plp-mern-wk-5-web-sockets-backened-0nno.onrender.com', 'https://plp-mern-wk-5-web-sockets-frontend-4.onrender.com', 'https://admin.socket.io']
       : ['http://localhost:5173', 'http://127.0.0.1:5173', 'https://admin.socket.io'],
     methods: ["GET", "POST"],
     credentials: true
