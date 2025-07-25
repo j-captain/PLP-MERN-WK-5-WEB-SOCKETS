@@ -13,10 +13,6 @@ export default function ChatPage({ username, onLogout }) {
   const typingTimeout = useRef(null);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
-  const messagesContainerRef = useRef(null);
-
-  // Track read messages
-  const readMessages = useRef(new Set());
 
   useEffect(() => {
     if (!socket) return;
@@ -43,22 +39,6 @@ export default function ChatPage({ username, onLogout }) {
           setMessages(prev => [...prev, msg]);
           setTypingUsers(prev => prev.filter(u => u !== msg.username));
         }
-      });
-
-      socket.on('messageRead', ({ messageId, readBy }) => {
-        setMessages(prev => prev.map(msg => 
-          msg._id === messageId ? { ...msg, readBy } : msg
-        ));
-      });
-
-      socket.on('messageDeleted', ({ messageId }) => {
-        setMessages(prev => prev.filter(msg => msg._id !== messageId));
-      });
-
-      socket.on('messageDeletedForMe', ({ messageId }) => {
-        setMessages(prev => prev.map(msg => 
-          msg._id === messageId ? { ...msg, deletedForMe: true } : msg
-        ));
       });
 
       socket.on('userConnection', data => {
@@ -92,8 +72,7 @@ export default function ChatPage({ username, onLogout }) {
     return () => {
       if (socket) {
         [
-          'roomList', 'roomJoined', 'message', 'messageRead',
-          'messageDeleted', 'messageDeletedForMe',
+          'roomList', 'roomJoined', 'message', 
           'userConnection', 'typing', 'stopTyping',
           'roomError'
         ].forEach(evt => socket.off(evt));
@@ -101,42 +80,9 @@ export default function ChatPage({ username, onLogout }) {
     };
   }, [socket, username, currentRoom]);
 
-  // Scroll to bottom and mark messages as read when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    
-    // Mark messages as read when they become visible
-    const observer = new IntersectionObserver((entries) => {
-      entries.forEach(entry => {
-        if (entry.isIntersecting) {
-          const messageId = entry.target.getAttribute('data-message-id');
-          if (messageId && !readMessages.current.has(messageId)) {
-            readMessages.current.add(messageId);
-            
-            // Find the message
-            const message = messages.find(m => m._id === messageId);
-            if (message && message.username !== username) {
-              socket.emit('markAsRead', { 
-                messageId, 
-                username 
-              });
-            }
-          }
-        }
-      });
-    }, { threshold: 0.5 });
-
-    const messageElements = messagesContainerRef.current?.querySelectorAll('.message-row');
-    messageElements?.forEach(el => {
-      observer.observe(el);
-    });
-
-    return () => {
-      messageElements?.forEach(el => {
-        observer.unobserve(el);
-      });
-    };
-  }, [messages, username, socket]);
+  }, [messages, typingUsers]);
 
   const sendMessage = () => {
     if (inputValue.trim() && socket && currentRoom) {
@@ -162,12 +108,10 @@ export default function ChatPage({ username, onLogout }) {
         content: `${fileIcon} ${file.name}`,
         room: currentRoom,
         username,
-        file: {
-          url: URL.createObjectURL(file),
-          name: file.name,
-          type: file.type,
-          size: file.size
-        }
+        isFile: true,
+        fileType,
+        fileName: file.name,
+        fileUrl: URL.createObjectURL(file) // Store the file URL for opening
       });
     }
   };
@@ -195,22 +139,23 @@ export default function ChatPage({ username, onLogout }) {
     return icons[type] || icons.file;
   };
 
-  const handleFileDownload = (fileName, fileUrl) => {
+  const handleFileClick = (fileName, fileUrl) => {
     if (fileUrl) {
+      // Create a temporary anchor element to trigger the download/open
       const a = document.createElement('a');
       a.href = fileUrl;
-      a.download = fileName;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      
+      // For downloads, you can set the download attribute
+      // a.download = fileName;
+      
+      // Trigger the click
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
     } else {
       alert(`File URL not available for ${fileName}`);
-    }
-  };
-
-  const handleFileOpen = (fileUrl) => {
-    if (fileUrl) {
-      window.open(fileUrl, '_blank');
     }
   };
 
@@ -245,76 +190,6 @@ export default function ChatPage({ username, onLogout }) {
     }
   };
 
-  const deleteMessage = (messageId, deleteForAll = false) => {
-    if (socket && messageId) {
-      socket.emit('deleteMessage', { 
-        messageId, 
-        deleteForAll,
-        username
-      });
-    }
-  };
-
-  const showDeleteMenu = (e, messageId, isMyMessage) => {
-    e.preventDefault();
-    const menu = document.createElement('div');
-    menu.className = 'delete-menu';
-    menu.style.position = 'absolute';
-    menu.style.left = `${e.clientX}px`;
-    menu.style.top = `${e.clientY}px`;
-    menu.style.background = 'white';
-    menu.style.borderRadius = '8px';
-    menu.style.boxShadow = '0 2px 10px rgba(0,0,0,0.1)';
-    menu.style.zIndex = '1000';
-    menu.style.padding = '8px 0';
-    
-    const deleteForMe = document.createElement('div');
-    deleteForMe.className = 'delete-option';
-    deleteForMe.textContent = 'Delete for me';
-    deleteForMe.style.padding = '8px 16px';
-    deleteForMe.style.cursor = 'pointer';
-    deleteForMe.onclick = () => {
-      deleteMessage(messageId, false);
-      document.body.removeChild(menu);
-    };
-    
-    menu.appendChild(deleteForMe);
-    
-    if (isMyMessage) {
-      const deleteForAll = document.createElement('div');
-      deleteForAll.className = 'delete-option';
-      deleteForAll.textContent = 'Delete for everyone';
-      deleteForAll.style.padding = '8px 16px';
-      deleteForAll.style.cursor = 'pointer';
-      deleteForAll.onclick = () => {
-        deleteMessage(messageId, true);
-        document.body.removeChild(menu);
-      };
-      menu.appendChild(deleteForAll);
-    }
-    
-    const cancel = document.createElement('div');
-    cancel.className = 'delete-option';
-    cancel.textContent = 'Cancel';
-    cancel.style.padding = '8px 16px';
-    cancel.style.cursor = 'pointer';
-    cancel.onclick = () => {
-      document.body.removeChild(menu);
-    };
-    menu.appendChild(cancel);
-    
-    document.body.appendChild(menu);
-    
-    const removeMenu = () => {
-      document.body.removeChild(menu);
-      document.removeEventListener('click', removeMenu);
-    };
-    
-    setTimeout(() => {
-      document.addEventListener('click', removeMenu);
-    }, 100);
-  };
-
   return (
     <>
       <style>{`
@@ -330,7 +205,6 @@ export default function ChatPage({ username, onLogout }) {
           --radius-lg: 1rem;
           --radius-md: 0.75rem;
           --radius-sm: 0.5rem;
-          --read-receipt: #4ade80;
         }
         
         body {
@@ -759,100 +633,6 @@ export default function ChatPage({ username, onLogout }) {
           animation: blink 1s infinite;
         }
         
-        .read-receipts {
-          display: flex;
-          align-items: center;
-          gap: 2px;
-          margin-top: 4px;
-          justify-content: flex-end;
-        }
-        
-        .read-receipt {
-          font-size: 0.7rem;
-          background: #e0e7ff;
-          color: #4f46e5;
-          padding: 0.1rem 0.3rem;
-          border-radius: 4px;
-          white-space: nowrap;
-        }
-        
-        .file-actions {
-          display: flex;
-          gap: 0.5rem;
-          margin-top: 0.5rem;
-        }
-        
-        .file-action-btn {
-          padding: 0.25rem 0.5rem;
-          border-radius: 4px;
-          border: none;
-          background: rgba(0,0,0,0.05);
-          cursor: pointer;
-          display: flex;
-          align-items: center;
-          gap: 0.25rem;
-          font-size: 0.8rem;
-        }
-        
-        .file-action-btn:hover {
-          background: rgba(0,0,0,0.1);
-        }
-        
-        .message-actions {
-          position: absolute;
-          top: -10px;
-          right: -10px;
-          display: none;
-        }
-        
-        .message-row:hover .message-actions {
-          display: flex;
-        }
-        
-        .delete-btn {
-          background: white;
-          border: none;
-          border-radius: 50%;
-          width: 20px;
-          height: 20px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          cursor: pointer;
-          box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-          color: #ef4444;
-          font-size: 12px;
-        }
-        
-        .delete-btn:hover {
-          background: #fef2f2;
-        }
-        
-        .download-btn {
-          background: white;
-          border: none;
-          border-radius: 50%;
-          width: 20px;
-          height: 20px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          cursor: pointer;
-          box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-          color: var(--primary-purple);
-          font-size: 12px;
-          margin-right: 5px;
-        }
-        
-        .download-btn:hover {
-          background: #f5f3ff;
-        }
-        
-        .deleted-message {
-          font-style: italic;
-          opacity: 0.7;
-        }
-        
         @keyframes blink { 
           0%,100% { opacity: 0.2; } 
           50% { opacity: 1; }
@@ -1061,7 +841,7 @@ export default function ChatPage({ username, onLogout }) {
             </div>
           </div>
 
-          <div className="messages" ref={messagesContainerRef}>
+          <div className="messages">
             {messages.length === 0 ? (
               <div className="no-messages">
                 <svg xmlns="http://www.w3.org/2000/svg" className="icon-empty" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -1074,91 +854,30 @@ export default function ChatPage({ username, onLogout }) {
             ) : (
               <>
                 {messages.map((msg, i) => (
-                  <div 
-                    key={i} 
-                    className={`message-row ${msg.username === username ? 'you' : 'other'}`}
-                    data-message-id={msg._id}
-                    onContextMenu={(e) => {
-                      if (msg.deletedForMe) return;
-                      e.preventDefault();
-                      showDeleteMenu(e, msg._id, msg.username === username);
-                    }}
-                  >
-                    {msg.deletedForMe ? (
-                      <div className="message-bubble deleted-message">
-                        Message deleted
+                  <div key={i} className={`message-row ${msg.username === username ? 'you' : 'other'}`}>
+                    <div className="message-bubble">
+                      <div className="msg-user-label">
+                        {msg.username === username ? 'You' : msg.username}
                       </div>
-                    ) : (
-                      <div className="message-bubble">
-                        <div className="msg-user-label">
-                          {msg.username === username ? 'You' : msg.username}
-                        </div>
-                        <div className="msg-text">
-                          {msg.file ? (
-                            <div>
-                              <div className="file-message">
-                                <span>{getFileIcon(getFileType(msg.file.type))}</span>
-                                <span>{msg.file.name}</span>
-                              </div>
-                              <div className="file-actions">
-                                <button 
-                                  className="file-action-btn"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleFileOpen(msg.file.url);
-                                  }}
-                                >
-                                  <span>🔍</span> Open
-                                </button>
-                                <button 
-                                  className="file-action-btn"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleFileDownload(msg.file.name, msg.file.url);
-                                  }}
-                                >
-                                  <span>📥</span> Download
-                                </button>
-                              </div>
-                            </div>
-                          ) : msg.content}
-                        </div>
-                        <div className="msg-time">
-                          {new Date(msg.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit'})}
-                        </div>
-                        
-                        {/* Read receipts */}
-                        {msg.username === username && msg.readBy && msg.readBy.length > 0 && (
-                          <div className="read-receipts">
-                            {msg.readBy.map((user, i) => (
-                              <span key={i} className="read-receipt" title={`Read by ${user}`}>
-                                {user}
-                              </span>
-                            ))}
+                      <div className="msg-text">
+                        {msg.isFile ? (
+                          <div className="file-message" onClick={() => handleFileClick(msg.fileName || msg.content.replace(/^[^\s]+\s/, ''), msg.fileUrl)}>
+                            <span>{getFileIcon(msg.fileType)}</span>
+                            <span>{msg.content.replace(/^[^\s]+\s/, '')}</span>
                           </div>
-                        )}
-                        
-                        {/* Message actions */}
-                        {msg.username === username && (
-                          <div className="message-actions">
-                            <button 
-                              className="delete-btn"
-                              onClick={() => deleteMessage(msg._id, false)}
-                              title="Delete for me"
-                            >
-                              ×
-                            </button>
-                            <button 
-                              className="delete-btn"
-                              onClick={() => deleteMessage(msg._id, true)}
-                              title="Delete for everyone"
-                            >
-                              🗑️
-                            </button>
-                          </div>
-                        )}
+                        ) : msg.content}
                       </div>
-                    )}
+                      <div className="msg-time">
+                        {new Date(msg.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit'})}
+                      </div>
+                      {msg.username !== username && (
+                        <button className="heart-btn">
+                          <svg xmlns="http://www.w3.org/2000/svg" className="heart-icon" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clipRule="evenodd" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))}
                 {typingUsers.filter(u => u !== username).map((user, i) => (

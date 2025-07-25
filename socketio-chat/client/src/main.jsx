@@ -5,7 +5,7 @@ import './index.css'
 import { io } from 'socket.io-client'
 
 // Create Socket.IO client connection
-const socket = io(import.meta.env.VITE_SERVER_URL || 'https://plp-mern-wk-5-web-sockets-backened-0nno.onrender.com', {
+const socket = io(import.meta.env.VITE_SERVER_URL || 'https://plp-mern-wk-5-web-sockets-1.onrender.com', {
   withCredentials: true,
   autoConnect: false, // We'll manually connect after auth
   reconnection: true,

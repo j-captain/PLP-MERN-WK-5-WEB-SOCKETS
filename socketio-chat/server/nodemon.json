@@ -1,0 +1,22 @@
+{
+  "restartable": "rs",
+  "ignore": [
+    ".git",
+    "node_modules/",
+    "uploads/",
+    ".env"
+  ],
+  "watch": [
+    "server.js",
+    "config/",
+    "models/",
+    "routes/"
+  ],
+  "ext": "js,json",
+  "verbose": true,
+  "env": {
+    "NODE_ENV": "development",
+    "PORT": "5000"
+  },
+  "exec": "node server.js"
+}

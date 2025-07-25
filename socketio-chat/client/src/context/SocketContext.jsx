@@ -10,7 +10,7 @@ export const SocketProvider = ({ children, username }) => {
   useEffect(() => {
     if (!username) return;
 
-    const newSocket = io('https://plp-mern-wk-5-web-sockets-backened-0nno.onrender.com', {
+    const newSocket = io('http://localhost:5000c', {
       auth: { username },
       withCredentials: true
     });
